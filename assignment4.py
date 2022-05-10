@@ -10,17 +10,13 @@ from tensorflow.keras.models import Model, load_model
 # policy network
 def OurModel(input_shape, action_space):
     X_input = Input(input_shape)
-
     # 'Dense' is the basic form of a neural network layer
     # Input Layer of state size(4) and Hidden Layer with 512 nodes
     X = Dense(512, input_shape=input_shape, activation="relu", kernel_initializer='he_uniform')(X_input)
-
     # Hidden layer with 256 nodes
     X = Dense(256, activation="relu", kernel_initializer='he_uniform')(X)
-    
     # Hidden layer with 64 nodes
     X = Dense(64, activation="relu", kernel_initializer='he_uniform')(X)
-
     # Output Layer with # of actions: 2 nodes (left, right)
     X = Dense(action_space, activation="linear", kernel_initializer='he_uniform')(X)
 
@@ -35,9 +31,10 @@ class DQNAgent:
         self.env = gym.make('CartPole-v1')
         # by default, CartPole-v1 has max episode steps = 500
         self.state_size = self.env.observation_space.shape[0]
-        self.action_size = self.env.action_space.n
+        self.action_size = self.env.action_space.n # Discrete action space?
         self.EPISODES = 1000
         self.memory = deque(maxlen=2000)
+        self.buckets = (3, 3, 6, 6)
         
         self.gamma = 0.95    # discount rate
         self.epsilon = 1.0  # exploration rate
@@ -48,6 +45,7 @@ class DQNAgent:
 
         # create main model
         self.model = OurModel(input_shape=(self.state_size,), action_space = self.action_size)
+        self.target_model = OurModel(input_shape=self.state_size, action_space=self.action_size)
 
     def remember(self, state, action, reward, next_state, done):
         self.memory.append((state, action, reward, next_state, done))
@@ -56,9 +54,20 @@ class DQNAgent:
                 self.epsilon *= self.epsilon_decay
     
     # to do
-    # implement the epsilon-greedy policy
+    # implement the epsilon-greedy policy: taking the action that has the highest value at each state
     def act(self, state):
-        # implement the epsilon-greedy policy
+        if self.epsilon > self.epsilon_min:
+            self.epsilon *= (1 - self.epsilon_decay)
+        exploration = self.epsilon
+
+        # Choose an action
+        if exploration > np.random.rand():
+            # Make a random action
+            return random.randrange(self.action_size), exploration
+        else:
+            # Take action with max value
+            return np.argmax(self.model.predict(state)), exploration
+
 
     # to do
     # implement the Q-learning
@@ -74,23 +83,34 @@ class DQNAgent:
 
         # assign data into state, next_state, action, reward and done from minibatch
         for i in range(self.batch_size):
-
-
         # compute value function of current(call it target) and value function of next state(call it target_next)
+            state[i] = minibatch[i][0]
+            action.append(minibatch[i][1])
+            reward.append(minibatch[i][2])
+            next_state[i] = minibatch[i][3]
+            done.append(minibatch[i][4])
 
+        # do batch prediction to save speed
+        # predict Q-values for starting state using the main network
+        target = self.model.predict(state)
+        target_old = np.array(target)
+        # predict best action in ending state using the main network
+        target_next = self.model.predict(next_state)
+        # predict Q-values for ending state using the target network
+        target_val = self.target_model.predict(next_state)
 
         for i in range(self.batch_size):
             # correction on the Q value for the action used,
             # if done[i] is true, then the target should be just the final reward
             if done[i]:
-                
+                target[i][action[i]] = reward[i]
             else:
                 # else, use Bellman Equation
                 # Standard - DQN
                 # DQN chooses the max Q value among next actions
                 # selection and evaluation of action is on the target Q Network
                 # target = max_a' (r + gamma*Q_target_next(s', a'))
-                
+                target[i][action[i]] = reward[i] + self.gamma * (np.amax(target_next[i]))
 
         # Train the Neural Network with batches where target is the value function
         self.model.fit(state, target, batch_size=self.batch_size, verbose=0)
